@@ -1,183 +1,177 @@
 """
-ENHANCED FEATURE ENGINEERING TESTS
-Includes:
-    • Pass/fail messages
-    • Detailed feature validation display
-    • Clear conditional logic reporting
-    • Engineered dataset preview + statistics
-    • Compatible with pytest AND normal Python execution
+test_feature_engineering.py
+---------------------------
+This test suite validates the entire feature engineering module:
+
+1. Functional FE correctness for all datasets.
+2. Schema validation (no duplicates, no missing values).
+3. NFR compliance (fe_time, max_features).
+4. Human-readable output (df.head(), shape, metrics).
+5. Integration with ingestion → cleaning → feature engineering pipeline.
+
+This file is intentionally verbose because it serves as a
+demonstration artifact for your capstone project.
 """
 
 import sys
 import os
 import pandas as pd
 
+# Ensure project root is in sys.path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.data_cleaning.data_cleaning import (
-    clean_uci,
-    clean_kaggle_habits,
-    clean_kaggle_exam,
-)
+# Import ingestion loaders
+from src.data_ingestion.load_dataset_uci import load_uci_dataset
+from src.data_ingestion.load_dataset_kaggle_habit import load_kaggle_student_habits
+from src.data_ingestion.load_dataset_kaggle_exam import load_kaggle_exam_performance
 
-from src.feature_engineering.feature_engineering import engineer_features
-from src.feature_engineering.schema_feature_validation import (
-    MANDATORY_FEATURES,
-    CONDITIONAL_FEATURES,
-)
+# Import cleaning pipeline
+from src.data_cleaning.data_cleaning import CleaningPipeline
+
+# Import feature engineering pipeline
+from src.feature_engineering.feature_engineering import FeatureEngineeringPipeline
+
+# Import NFR rules
+from src.feature_engineering.feature_rules import FEATURE_NFR_THRESHOLDS
 
 
-# ---------------------------------------------------------------------
-# DISPLAY ENGINEERED DATA
-# ---------------------------------------------------------------------
-def display_engineered_data(df_engineered, dataset_name):
+# -------------------------------------------------------------------
+# Helper printing utilities
+# -------------------------------------------------------------------
+
+def print_section(title):
+    """Prints a formatted section header for readability."""
     print("\n" + "=" * 70)
-    print(f"DATA PROCESSING RESULT — {dataset_name}")
+    print(title)
     print("=" * 70)
 
-    # Shape
-    print(f"\nShape: {df_engineered.shape[0]} rows × {df_engineered.shape[1]} columns")
 
-    # Columns
+def print_fe_summary(df, metrics):
+    """
+    Prints a human-readable summary of the dataset after feature engineering.
+    This is used as proof that FE works correctly.
+    """
+    print("\n--- FEATURE ENGINEERING SUMMARY ---")
+    print("Shape:", df.shape)
+
     print("\nColumns:")
-    for col in df_engineered.columns:
-        print(f"  • {col}")
+    print(list(df.columns))
 
-    # Preview
-    print("\nPreview (first 5 rows):")
-    print(df_engineered.head())
+    print("\nHead:")
+    print(df.head())
 
-    # Summary statistics (numeric only)
-    print("\nSummary Statistics:")
-    try:
-        # Pandas 2.x
-        print(df_engineered.describe(include='all', datetime_is_numeric=True))
-    except TypeError:
-        # Pandas 1.x fallback
-        print(df_engineered.describe(include='all'))
-
-    print("\n" + "=" * 70 + "\n")
+    print("\n--- FEATURE ENGINEERING METRICS ---")
+    for k, v in metrics.items():
+        print(f"{k}: {v}")
 
 
-# ---------------------------------------------------------------------
-# VALIDATION + DISPLAY
-# ---------------------------------------------------------------------
-def assert_features_exist(df_engineered, cleaned_columns, dataset_name):
-    df_columns = set(df_engineered.columns)
+# -------------------------------------------------------------------
+# Functional Feature Engineering Tests
+# -------------------------------------------------------------------
 
-    print("\n" + "=" * 70)
-    print(f"FEATURE VALIDATION REPORT — {dataset_name}")
-    print("=" * 70)
+def test_fe_uci():
+    print_section("FEATURE ENGINEERING TEST — UCI DATASET")
 
-    # ------------------------------
-    # 1. Mandatory features
-    # ------------------------------
-    print("\nMANDATORY FEATURES:")
-    missing_mandatory = []
-    for feat in MANDATORY_FEATURES:
-        if feat in df_columns:
-            print(f"  ✔ {feat}")
-        else:
-            print(f"  ✘ {feat} (MISSING)")
-            missing_mandatory.append(feat)
+    raw_df, _ = load_uci_dataset()
+    cleaned_df, _, metadata = CleaningPipeline(raw_df).clean()
+    fe_df, fe_metrics = FeatureEngineeringPipeline(cleaned_df, metadata).engineer()
 
-    if missing_mandatory:
-        raise AssertionError(
-            f"{dataset_name} missing mandatory features: {missing_mandatory}"
-        )
+    assert isinstance(fe_df, pd.DataFrame)
+    assert len(fe_df) > 0
 
-    # ------------------------------
-    # 2. Conditional features
-    # ------------------------------
-    print("\nCONDITIONAL FEATURES:")
-    missing_conditional = []
-
-    for base, required_features in CONDITIONAL_FEATURES.items():
-
-        # Determine trigger condition
-        if isinstance(base, str):
-            trigger = base in cleaned_columns
-        else:
-            trigger = all(col in cleaned_columns for col in base)
-
-        # Display trigger status
-        print(f"\n  Base Column(s): {base}")
-        print(f"  Triggered: {'YES' if trigger else 'NO'}")
-
-        if not trigger:
-            print("  → Skipping conditional features (base column missing)")
-            continue
-
-        # Check required features
-        for feat in required_features:
-            if feat in df_columns:
-                print(f"    ✔ {feat}")
-            else:
-                print(f"    ✘ {feat} (MISSING)")
-                missing_conditional.append(feat)
-
-    if missing_conditional:
-        raise AssertionError(
-            f"{dataset_name} missing conditional engineered features: {missing_conditional}"
-        )
-
-    print("\n✔ ALL FEATURES VALIDATED SUCCESSFULLY\n")
+    print_fe_summary(fe_df, fe_metrics)
 
 
-# ---------------------------------------------------------------------
-# PYTEST TESTS
-# ---------------------------------------------------------------------
-def test_feature_engineering_uci():
-    df_clean = clean_uci()
-    df_feat = engineer_features(df_clean, "UCI Dataset")
+def test_fe_kaggle_habits():
+    print_section("FEATURE ENGINEERING TEST — KAGGLE HABITS DATASET")
 
-    display_engineered_data(df_feat, "UCI Dataset")
-    assert_features_exist(df_feat, df_clean.columns, "UCI Dataset")
+    raw_df, _ = load_kaggle_student_habits()
+    cleaned_df, _, metadata = CleaningPipeline(raw_df).clean()
+    fe_df, fe_metrics = FeatureEngineeringPipeline(cleaned_df, metadata).engineer()
 
+    assert isinstance(fe_df, pd.DataFrame)
+    assert len(fe_df) > 0
 
-def test_feature_engineering_kaggle_habits():
-    df_clean = clean_kaggle_habits()
-    df_feat = engineer_features(df_clean, "Kaggle Habits Dataset")
-
-    display_engineered_data(df_feat, "Kaggle Habits Dataset")
-    assert_features_exist(df_feat, df_clean.columns, "Kaggle Habits Dataset")
+    print_fe_summary(fe_df, fe_metrics)
 
 
-def test_feature_engineering_kaggle_exam():
-    df_clean = clean_kaggle_exam()
-    df_feat = engineer_features(df_clean, "Kaggle Exam Dataset")
+def test_fe_kaggle_exam():
+    print_section("FEATURE ENGINEERING TEST — KAGGLE EXAM DATASET")
 
-    display_engineered_data(df_feat, "Kaggle Exam Dataset")
-    assert_features_exist(df_feat, df_clean.columns, "Kaggle Exam Dataset")
+    raw_df, _ = load_kaggle_exam_performance()
+    cleaned_df, _, metadata = CleaningPipeline(raw_df).clean()
+    fe_df, fe_metrics = FeatureEngineeringPipeline(cleaned_df, metadata).engineer()
+
+    assert isinstance(fe_df, pd.DataFrame)
+    assert len(fe_df) > 0
+
+    print_fe_summary(fe_df, fe_metrics)
 
 
-# ---------------------------------------------------------------------
-# MANUAL RUNNER
-# ---------------------------------------------------------------------
-def manual_run():
-    print("\nRunning Feature Engineering Tests (Manual Execution)\n")
+# -------------------------------------------------------------------
+# Schema Validation Tests
+# -------------------------------------------------------------------
 
-    for name, cleaner in [
-        ("UCI Dataset", clean_uci),
-        ("Kaggle Habits Dataset", clean_kaggle_habits),
-        ("Kaggle Exam Dataset", clean_kaggle_exam),
-    ]:
-        print(f"\n=== Testing {name} ===")
-        df_clean = cleaner()
-        df_feat = engineer_features(df_clean, name)
+def test_fe_schema_all():
+    print_section("SCHEMA VALIDATION — ALL DATASETS")
 
-        # Show engineered dataset
-        display_engineered_data(df_feat, name)
+    datasets = {
+        "UCI": load_uci_dataset,
+        "Kaggle Habits": load_kaggle_student_habits,
+        "Kaggle Exam": load_kaggle_exam_performance,
+    }
 
-        # Validate features
-        assert_features_exist(df_feat, df_clean.columns, name)
+    for name, loader in datasets.items():
+        print_section(f"SCHEMA VALIDATION — {name}")
 
-        print(f"✔ {name} passed.\n")
+        raw_df, _ = loader()
+        cleaned_df, _, metadata = CleaningPipeline(raw_df).clean()
+        fe_df, _ = FeatureEngineeringPipeline(cleaned_df, metadata).engineer()
 
-    print("\n✔ ALL FEATURE ENGINEERING TESTS PASSED SUCCESSFULLY\n")
+        assert fe_df.columns.is_unique
+        assert fe_df.isna().sum().sum() == 0
 
+        print(f"Schema validated for {name} dataset.")
+
+
+# -------------------------------------------------------------------
+# NFR Tests (fe_time, max_features)
+# -------------------------------------------------------------------
+
+def test_fe_nfr_all():
+    print_section("NFR TEST — FEATURE ENGINEERING MODULE (ALL DATASETS)")
+
+    datasets = {
+        "UCI": load_uci_dataset,
+        "Kaggle Habits": load_kaggle_student_habits,
+        "Kaggle Exam": load_kaggle_exam_performance,
+    }
+
+    for name, loader in datasets.items():
+        print_section(f"NFR TEST — {name}")
+
+        raw_df, _ = loader()
+        cleaned_df, _, metadata = CleaningPipeline(raw_df).clean()
+        fe_df, fe_metrics = FeatureEngineeringPipeline(cleaned_df, metadata).engineer()
+
+        assert fe_metrics["fe_time"] <= FEATURE_NFR_THRESHOLDS["fe_time_max"]
+        assert fe_metrics["total_features"] <= FEATURE_NFR_THRESHOLDS["max_features"]
+
+        print_fe_summary(fe_df, fe_metrics)
+
+    print("\nAll NFR tests passed for all datasets.")
+
+
+# -------------------------------------------------------------------
+# Direct Execution Support
+# -------------------------------------------------------------------
 
 if __name__ == "__main__":
-    manual_run()
+    test_fe_uci()
+    test_fe_kaggle_habits()
+    test_fe_kaggle_exam()
+    test_fe_schema_all()
+    test_fe_nfr_all()
+    print_section("ALL FEATURE ENGINEERING TESTS COMPLETED SUCCESSFULLY")

@@ -1,10 +1,20 @@
 """
-src.data_cleaning package
-
-This file simply marks the folder as a Python package.
-All logic lives in:
-- data_cleaning.py      → pipeline orchestrator
-- cleaning_rules.py     → fairness-aligned cleaning policies
-- cleaning_utils.py     → helper utilities
-- schema_validation.py  → schema consistency checks
+__init__.py
+-----------
+Public API for the cleaning module.
 """
+
+from .data_cleaning import CleaningPipeline
+from .cleaning_utils import (
+    normalize_columns,
+    fill_missing_values,
+    fix_numeric_anomalies,
+    extract_metadata,
+)
+from .cleaning_rules import (
+    MISSING_VALUE_STRATEGIES,
+    NUMERIC_ANOMALY_RULES,
+    COLUMN_NORMALIZATION_RULES,
+    CLEANING_NFR_THRESHOLDS,
+)
+from .schema_validation import validate_sis_schema, normalize_sis_fields

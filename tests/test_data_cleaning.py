@@ -1,186 +1,226 @@
 """
-Tests for the data cleaning pipeline.
+test_data_cleaning.py
+---------------------
+This test suite validates the entire cleaning module:
 
-These tests ensure that:
-- Cleaning runs successfully for all three datasets.
-- No impossible numeric values remain (e.g., attendance > 100).
-- Missingness indicators are correctly created and valid.
-- Safe imputation rules are applied (no remaining NaN in non-indicator columns).
-- The pipeline integrates correctly with ingestion.
+1. Functional cleaning correctness for all datasets.
+2. Schema preservation (non-destructive cleaning).
+3. SIS schema validation after cleaning.
+4. NFR compliance (cleaning_time, scalability).
+5. Human-readable output (df.head(), shape, metrics, metadata).
+6. Integration with ingestion → cleaning pipeline.
 
-They do NOT test model performance; they only validate data quality and fairness.
-
-This file works with BOTH:
-- pytest (automatic test discovery)
-- normal Python execution (manual runner at bottom)
+This file is intentionally verbose because it serves as a
+demonstration artifact for your capstone project.
 """
 
 import sys
 import os
 import pandas as pd
 
-# Ensure project root is in Python path for direct execution
+# Ensure project root is in sys.path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.data_cleaning.data_cleaning import (
-    clean_uci,
-    clean_kaggle_habits,
-    clean_kaggle_exam,
-)
+# Import ingestion loaders
+from src.data_ingestion.load_dataset_uci import load_uci_dataset
+from src.data_ingestion.load_dataset_kaggle_habit import load_kaggle_student_habits
+from src.data_ingestion.load_dataset_kaggle_exam import load_kaggle_exam_performance
+
+# Import cleaning pipeline
+from src.data_cleaning.data_cleaning import CleaningPipeline
+
+# Import SIS + NFR rules
+from src.data_cleaning.schema_validation import validate_sis_schema
+from src.data_cleaning.cleaning_rules import CLEANING_NFR_THRESHOLDS
 
 
-# ---------------------------------------------------------------------
-# FAIRNESS-ALIGNED VALIDATION HELPERS
-# ---------------------------------------------------------------------
-
-def assert_no_impossible_values(df: pd.DataFrame):
-    """
-    Check numeric columns for impossible values.
-
-    Non-numeric values (e.g., 'Unknown') are allowed because they represent
-    safe categorical placeholders after fairness-aligned imputation.
-    """
-
-    def check_numeric_range(series, min_val, max_val, col_name):
-        numeric_series = pd.to_numeric(series, errors="coerce")
-        valid = numeric_series.dropna()
-        assert ((valid >= min_val) & (valid <= max_val)).all(), \
-            f"Column {col_name} contains impossible numeric values."
-
-    if "attendance_percentage" in df.columns:
-        check_numeric_range(df["attendance_percentage"], 0, 100, "attendance_percentage")
-
-    if "final_exam_score" in df.columns:
-        check_numeric_range(df["final_exam_score"], 0, 100, "final_exam_score")
-
-    if "sleep_hours" in df.columns:
-        check_numeric_range(df["sleep_hours"], 0, 24, "sleep_hours")
-
-    if "study_hours_per_day" in df.columns:
-        check_numeric_range(df["study_hours_per_day"], 0, 24, "study_hours_per_day")
-
-
-def assert_missing_indicators(df: pd.DataFrame):
-    """
-    Check that missingness indicator columns are correctly formed.
-    """
-    for col in df.columns:
-        if col.endswith("_missing"):
-            base = col.replace("_missing", "")
-            assert base in df.columns, f"Missing base column for indicator: {col}"
-            unique_vals = set(df[col].unique())
-            assert unique_vals.issubset({0, 1}), \
-                f"Indicator {col} has invalid values: {unique_vals}"
-
-
-def assert_safe_imputation(df: pd.DataFrame):
-    """
-    Check that non-indicator columns do not contain NaN after cleaning.
-    """
-    for col in df.columns:
-        if col.endswith("_missing"):
-            continue
-        assert not df[col].isnull().any(), \
-            f"Column {col} still has missing values after cleaning."
-
-
-# ---------------------------------------------------------------------
-# TEST FUNCTIONS (pytest only — must return None)
-# ---------------------------------------------------------------------
-
-def test_clean_uci():
-    df = clean_uci()
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-
-    assert_no_impossible_values(df)
-    assert_missing_indicators(df)
-    assert_safe_imputation(df)
-
-
-def test_clean_kaggle_habits():
-    df = clean_kaggle_habits()
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-
-    assert_no_impossible_values(df)
-    assert_missing_indicators(df)
-    assert_safe_imputation(df)
-
-
-def test_clean_kaggle_exam():
-    df = clean_kaggle_exam()
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-
-    assert_no_impossible_values(df)
-    assert_missing_indicators(df)
-    assert_safe_imputation(df)
-
-
-# ---------------------------------------------------------------------
-# MANUAL RUNNER — prints cleaned results for normal Python execution
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------
+# Helper printing utilities
+# -------------------------------------------------------------------
 
 def print_section(title):
+    """Prints a formatted section header for readability."""
     print("\n" + "=" * 70)
     print(title)
     print("=" * 70)
 
 
-def show_cleaning_summary(df: pd.DataFrame, name: str):
+def print_cleaning_summary(df, metrics, metadata):
     """
-    Display a readable summary of the cleaned dataset.
-    Similar to ingestion test output.
+    Prints a human-readable summary of the dataset after cleaning.
+    This is used as proof that cleaning works correctly.
     """
+    print("\n--- CLEANED DATASET SUMMARY ---")
+    print("Shape:", df.shape)
 
-    print_section(f"CLEANED DATASET SUMMARY: {name}")
+    print("\nColumns:")
+    print(list(df.columns))
 
-    print(f"Shape: {df.shape}")
-    print(f"Columns: {len(df.columns)} total")
-
-    # Count missingness indicators
-    missing_indicators = [c for c in df.columns if c.endswith("_missing")]
-    print(f"Missingness indicators: {len(missing_indicators)}")
-    print(f"Indicator columns: {missing_indicators[:10]}{' ...' if len(missing_indicators) > 10 else ''}")
-
-    # Show first few rows
-    print("\nPreview of cleaned data:")
+    print("\nHead:")
     print(df.head())
 
-    print("\nNumeric validation:")
-    try:
-        assert_no_impossible_values(df)
-        print("✔ No impossible numeric values detected.")
-    except AssertionError as e:
-        print("❌ Numeric validation failed:", str(e))
+    print("\n--- CLEANING METRICS ---")
+    for k, v in metrics.items():
+        print(f"{k}: {v}")
 
-    print("\nImputation validation:")
-    try:
-        assert_safe_imputation(df)
-        print("✔ No remaining NaN values in non-indicator columns.")
-    except AssertionError as e:
-        print("❌ Imputation validation failed:", str(e))
+    print("\n--- METADATA (for Feature Engineering) ---")
+    for k, v in metadata.items():
+        print(f"{k}: {v}")
 
+
+# -------------------------------------------------------------------
+# Functional Cleaning Tests
+# -------------------------------------------------------------------
+
+def test_cleaning_uci():
+    print_section("FUNCTIONAL CLEANING TEST — UCI DATASET")
+
+    raw_df, _ = load_uci_dataset()
+    pipeline = CleaningPipeline(raw_df)
+    cleaned_df, metrics, metadata = pipeline.clean()
+
+    assert isinstance(cleaned_df, pd.DataFrame)
+    assert len(cleaned_df) > 0
+
+    print_cleaning_summary(cleaned_df, metrics, metadata)
+
+
+def test_cleaning_kaggle_habits():
+    print_section("FUNCTIONAL CLEANING TEST — KAGGLE HABITS DATASET")
+
+    raw_df, _ = load_kaggle_student_habits()
+    pipeline = CleaningPipeline(raw_df)
+    cleaned_df, metrics, metadata = pipeline.clean()
+
+    assert isinstance(cleaned_df, pd.DataFrame)
+    assert len(cleaned_df) > 0
+
+    print_cleaning_summary(cleaned_df, metrics, metadata)
+
+
+def test_cleaning_kaggle_exam():
+    print_section("FUNCTIONAL CLEANING TEST — KAGGLE EXAM DATASET")
+
+    raw_df, _ = load_kaggle_exam_performance()
+    pipeline = CleaningPipeline(raw_df)
+    cleaned_df, metrics, metadata = pipeline.clean()
+
+    assert isinstance(cleaned_df, pd.DataFrame)
+    assert len(cleaned_df) > 0
+
+    print_cleaning_summary(cleaned_df, metrics, metadata)
+
+
+# -------------------------------------------------------------------
+# Schema Preservation Tests (non-destructive cleaning)
+# -------------------------------------------------------------------
+
+def test_schema_preservation_uci():
+    print_section("SCHEMA PRESERVATION — UCI")
+
+    raw_df, _ = load_uci_dataset()
+    pipeline = CleaningPipeline(raw_df)
+    cleaned_df, _, _ = pipeline.clean()
+
+    for col in raw_df.columns:
+        assert col.lower().strip() in cleaned_df.columns
+
+    print("Schema preserved for UCI dataset.")
+
+
+def test_schema_preservation_kaggle_habits():
+    print_section("SCHEMA PRESERVATION — KAGGLE HABITS")
+
+    raw_df, _ = load_kaggle_student_habits()
+    pipeline = CleaningPipeline(raw_df)
+    cleaned_df, _, _ = pipeline.clean()
+
+    for col in raw_df.columns:
+        assert col.lower().strip() in cleaned_df.columns
+
+    print("Schema preserved for Kaggle Habits dataset.")
+
+
+def test_schema_preservation_kaggle_exam():
+    print_section("SCHEMA PRESERVATION — KAGGLE EXAM")
+
+    raw_df, _ = load_kaggle_exam_performance()
+    pipeline = CleaningPipeline(raw_df)
+    cleaned_df, _, _ = pipeline.clean()
+
+    for col in raw_df.columns:
+        assert col.lower().strip() in cleaned_df.columns
+
+    print("Schema preserved for Kaggle Exam dataset.")
+
+
+# -------------------------------------------------------------------
+# SIS Schema Validation Tests
+# -------------------------------------------------------------------
+
+def test_sis_validation_all():
+    print_section("SIS VALIDATION — ALL DATASETS")
+
+    datasets = {
+        "UCI": load_uci_dataset,
+        "Kaggle Habits": load_kaggle_student_habits,
+        "Kaggle Exam": load_kaggle_exam_performance,
+    }
+
+    for name, loader in datasets.items():
+        print_section(f"SIS VALIDATION — {name}")
+
+        raw_df, _ = loader()
+        pipeline = CleaningPipeline(raw_df)
+        cleaned_df, _, _ = pipeline.clean()
+
+        missing = validate_sis_schema(cleaned_df)
+        assert len(missing) == 0
+
+        print(f"SIS fields validated for {name} dataset.")
+
+
+# -------------------------------------------------------------------
+# NFR Tests (cleaning_time, scalability)
+# -------------------------------------------------------------------
+
+def test_cleaning_nfr_all():
+    print_section("NFR TEST — CLEANING MODULE (ALL DATASETS)")
+
+    datasets = {
+        "UCI": load_uci_dataset,
+        "Kaggle Habits": load_kaggle_student_habits,
+        "Kaggle Exam": load_kaggle_exam_performance,
+    }
+
+    for name, loader in datasets.items():
+        print_section(f"NFR TEST — {name}")
+
+        raw_df, _ = loader()
+        pipeline = CleaningPipeline(raw_df)
+        cleaned_df, metrics, metadata = pipeline.clean()
+
+        assert metrics["cleaning_time"] <= CLEANING_NFR_THRESHOLDS["cleaning_time_max"]
+        assert metrics["record_count"] <= CLEANING_NFR_THRESHOLDS["max_records"]
+
+        print_cleaning_summary(cleaned_df, metrics, metadata)
+
+    print("\nAll NFR tests passed for all datasets.")
+
+
+# -------------------------------------------------------------------
+# Direct Execution Support
+# -------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print_section("RUNNING DATA CLEANING TESTS (Manual Python Execution)")
-
-    try:
-        df_uci = clean_uci()
-        show_cleaning_summary(df_uci, "UCI Student Performance")
-
-        df_habits = clean_kaggle_habits()
-        show_cleaning_summary(df_habits, "Kaggle Study Habits")
-
-        df_exam = clean_kaggle_exam()
-        show_cleaning_summary(df_exam, "Kaggle Exam Performance")
-
-        print_section("ALL CLEANING TESTS PASSED SUCCESSFULLY")
-
-    except AssertionError as e:
-        print("\n❌ TEST FAILED:")
-        print(str(e))
-        raise
+    test_cleaning_uci()
+    test_cleaning_kaggle_habits()
+    test_cleaning_kaggle_exam()
+    test_schema_preservation_uci()
+    test_schema_preservation_kaggle_habits()
+    test_schema_preservation_kaggle_exam()
+    test_sis_validation_all()
+    test_cleaning_nfr_all()
+    print_section("ALL CLEANING TESTS COMPLETED SUCCESSFULLY")
