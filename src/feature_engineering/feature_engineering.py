@@ -1,78 +1,73 @@
 """
-FEATURE ENGINEERING PIPELINE ORCHESTRATOR
-
-This module connects:
-    • CLEANED DATA  → from src.data_cleaning
-    • FEATURE RULES → from feature_rules.py
-    • SCHEMA CHECKS → from schema_feature_validation.py
-
-IMPORTANT FIX:
-    We now pass CLEANED COLUMN NAMES into the schema validator.
-    This prevents conditional features from being incorrectly required
-    when the cleaned dataset does NOT contain the base column.
+feature_engineering.py
+----------------------
+Main FeatureEngineeringPipeline.
 """
 
-import os
+import time
 import pandas as pd
 
-from src.data_cleaning.data_cleaning import (
-    clean_uci,
-    clean_kaggle_habits,
-    clean_kaggle_exam,
+from src.feature_engineering.feature_utils import (
+    encode_categorical,
+    scale_numeric,
+    create_interaction_features,
 )
 
-from src.feature_engineering.feature_rules import apply_feature_rules
-from src.feature_engineering.schema_feature_validation import validate_feature_schema
+from src.feature_engineering.feature_rules import (
+    ENCODING_RULES,
+    SCALING_RULES,
+    FEATURE_NFR_THRESHOLDS,
+)
+
+from src.feature_engineering.schema_validation import validate_feature_schema
 
 
-def engineer_features(df: pd.DataFrame, name: str) -> pd.DataFrame:
-    """
-    Apply feature engineering rules + schema validation.
+class FeatureEngineeringPipeline:
 
-    FIX:
-        Pass df.columns (CLEANED columns) into validator.
-        This ensures conditional features are only required
-        when the CLEANED dataset contains the base column.
-    """
-    df_feat = apply_feature_rules(df)
+    def __init__(self, df: pd.DataFrame, metadata: dict):
+        self.df = df.copy()
+        self.metadata = metadata
 
-    # FIX — pass CLEANED columns
-    validate_feature_schema(df_feat, name, df.columns)
+        self.metrics = {
+            "fe_time": None,
+            "encoded_columns": 0,
+            "scaled_columns": 0,
+            "interaction_features": 0,
+            "total_features": None,
+        }
 
-    return df_feat
+    def engineer(self):
+        start = time.time()
 
+        # 1. Encode categorical variables
+        categorical_cols = self.metadata["categorical_columns"]
+        if categorical_cols:
+            self.df = encode_categorical(self.df, categorical_cols)
+            self.metrics["encoded_columns"] = len(categorical_cols)
 
-def save_engineered(df: pd.DataFrame, name: str):
-    os.makedirs("data/engineered", exist_ok=True)
-    path = os.path.join("data", "engineered", f"{name}.csv")
-    df.to_csv(path, index=False)
-    print(f"Saved engineered dataset to: {path}")
+        # 2. Scale numeric variables
+        numeric_cols = self.metadata["numeric_columns"]
+        if numeric_cols:
+            self.df = scale_numeric(self.df, numeric_cols, SCALING_RULES["numeric_scaling"])
+            self.metrics["scaled_columns"] = len(numeric_cols)
 
+        # 3. Interaction features
+        interaction_df = create_interaction_features(self.df, numeric_cols)
+        self.df = pd.concat([self.df, interaction_df], axis=1)
+        self.metrics["interaction_features"] = interaction_df.shape[1]
 
-def print_summary(df: pd.DataFrame, name: str):
-    print("\n" + "=" * 70)
-    print(f"FEATURE ENGINEERING SUMMARY: {name}")
-    print("=" * 70)
-    print(df.head())
+        # 4. Schema validation
+        validate_feature_schema(self.df)
 
+        # 5. NFR metrics
+        end = time.time()
+        self.metrics["fe_time"] = end - start
+        self.metrics["total_features"] = self.df.shape[1]
 
-def main():
-    uci_clean = clean_uci()
-    kaggle_habits_clean = clean_kaggle_habits()
-    kaggle_exam_clean = clean_kaggle_exam()
+        assert self.metrics["fe_time"] <= FEATURE_NFR_THRESHOLDS["fe_time_max"], \
+            f"FE time exceeded NFR limit ({self.metrics['fe_time']}s > {FEATURE_NFR_THRESHOLDS['fe_time_max']}s)."
 
-    uci_feat = engineer_features(uci_clean, "UCI Dataset")
-    kaggle_habits_feat = engineer_features(kaggle_habits_clean, "Kaggle Habits Dataset")
-    kaggle_exam_feat = engineer_features(kaggle_exam_clean, "Kaggle Exam Dataset")
+        assert self.metrics["total_features"] <= FEATURE_NFR_THRESHOLDS["max_features"], \
+            f"Too many features created ({self.metrics['total_features']} > {FEATURE_NFR_THRESHOLDS['max_features']})."
 
-    save_engineered(uci_feat, "uci_engineered")
-    save_engineered(kaggle_habits_feat, "kaggle_habits_engineered")
-    save_engineered(kaggle_exam_feat, "kaggle_exam_engineered")
-
-    print_summary(uci_feat, "UCI Dataset")
-    print_summary(kaggle_habits_feat, "Kaggle Habits Dataset")
-    print_summary(kaggle_exam_feat, "Kaggle Exam Dataset")
-
-
-if __name__ == "__main__":
-    main()
+        return self.df, self.metrics

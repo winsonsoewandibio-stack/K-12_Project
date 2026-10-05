@@ -43,4 +43,3 @@ def load_uci_dataset(path="data/uci/student_performance/student_performance.csv"
             raise ValueError(f"SIS field missing in UCI dataset: {field}")
 
     return df, metrics
-

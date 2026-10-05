@@ -40,4 +40,3 @@ def load_kaggle_exam_performance(
             raise ValueError(f"SIS field missing in Kaggle Exam dataset: {field}")
 
     return df, metrics
-

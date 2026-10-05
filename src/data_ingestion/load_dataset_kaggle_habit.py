@@ -40,4 +40,3 @@ def load_kaggle_student_habits(
             raise ValueError(f"SIS field missing in Kaggle Habits dataset: {field}")
 
     return df, metrics
-

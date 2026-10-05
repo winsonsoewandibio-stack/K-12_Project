@@ -108,8 +108,12 @@ def extract_metadata(df: pd.DataFrame) -> dict:
     """
     return {
         "numeric_columns": list(df.select_dtypes(include=["number"]).columns),
-        "categorical_columns": list(df.select_dtypes(include=["object"]).columns),
+
+        # ⭐ UPDATED: Pandas warning removed
+        "categorical_columns": list(df.select_dtypes(include=["object", "string"]).columns),
+
         "boolean_columns": list(df.select_dtypes(include=["bool"]).columns),
+
         "sis_fields": ["student_id", "grade_level", "attendance", "exam_score"],
         "total_columns": len(df.columns),
     }
