@@ -1,101 +1,62 @@
 """
-UTILITY FUNCTIONS FOR FEATURE ENGINEERING
-
-These helpers DO NOT encode domain logic.
-They only provide reusable mathematical operations.
-
-This keeps feature_rules.py clean, readable, and domain‑focused.
+feature_utils.py
+----------------
+Utility functions used by the FeatureEngineeringPipeline.
 """
 
 import pandas as pd
-import numpy as np
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 
-def safe_divide(a, b):
+# -------------------------------------------------------------------
+# One-Hot Encoding (High-Cardinality Safe)
+# -------------------------------------------------------------------
+def encode_categorical(df: pd.DataFrame, categorical_cols: list):
     """
-    Safe division:
-    - Avoids ZeroDivisionError
-    - Avoids NaN propagation
-    - Returns 0 when denominator is zero or missing
+    One-hot encode categorical columns, excluding high-cardinality columns.
 
-    Used for:
-        • study_efficiency_score
-        • missingness_ratio
-        • normalized risk calculations
+    High-cardinality columns (e.g., student_id with 100k unique values)
+    would explode the feature space and violate NFR constraints.
+
+    IMPORTANT:
+    - We DO NOT drop high-cardinality columns.
+    - We simply DO NOT encode them.
+    - They remain in the dataset for identification, fairness slicing,
+      SHAP per-student explanations, and prediction reporting.
     """
-    try:
-        if b is None or b == 0 or pd.isna(b):
-            return 0
-        return a / b
-    except Exception:
-        return 0
+    safe_cols = []
+
+    for col in categorical_cols:
+        unique_count = df[col].nunique()
+
+        # Skip columns with too many categories
+        if unique_count <= 50:
+            safe_cols.append(col)
+        else:
+            print(f"[WARNING] Skipping high-cardinality column: {col} ({unique_count} unique values)")
+
+    # Only encode safe categorical columns
+    return pd.get_dummies(df, columns=safe_cols, drop_first=True)
 
 
-def bucketize(series, bins, labels):
-    """
-    Convert numeric values into categorical buckets.
-
-    Used for:
-        • risk tiers
-        • study/sleep buckets
-        • teacher‑friendly categories
-    """
-    return pd.cut(series, bins=bins, labels=labels, include_lowest=True)
+# -------------------------------------------------------------------
+# Numeric Scaling
+# -------------------------------------------------------------------
+def scale_numeric(df: pd.DataFrame, numeric_cols: list, method="standard"):
+    scaler = StandardScaler() if method == "standard" else MinMaxScaler()
+    df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+    return df
 
 
-def interaction(a, b):
-    """
-    Create numeric interaction terms.
+# -------------------------------------------------------------------
+# Interaction Features
+# -------------------------------------------------------------------
+def create_interaction_features(df: pd.DataFrame, numeric_cols: list):
+    interactions = {}
 
-    Used for:
-        • study × sleep
-        • attendance × study
+    for i, col1 in enumerate(numeric_cols):
+        for col2 in numeric_cols[i+1:]:
+            interactions[f"{col1}_plus_{col2}"] = df[col1] + df[col2]
+            interactions[f"{col1}_times_{col2}"] = df[col1] * df[col2]
 
-    SHAP interprets interaction terms extremely well.
-    """
-    return a * b
-
-
-def normalize_to_unit(series, max_val):
-    """
-    Normalize numeric values to [0,1].
-
-    Used for:
-        • opportunity scores
-        • normalized interactions
-    """
-    return series.astype(float) / float(max_val)
-
-
-def boolean_flag(condition_series):
-    """
-    Convert boolean conditions into 0/1 flags.
-
-    Used for:
-        • low_study_flag
-        • low_sleep_flag
-        • high_missingness_flag
-
-    Boolean flags are highly SHAP‑interpretable.
-    """
-    return condition_series.astype(int)
-
-
-def entropy_from_binary_row(row):
-    """
-    Compute entropy of missingness indicators.
-
-    High entropy = inconsistent missingness
-    Low entropy = predictable missingness
-
-    Used for:
-        • missingness_entropy (data health feature)
-    """
-    vals = row.values
-    total = len(vals)
-    if total == 0:
-        return 0.0
-    p1 = np.sum(vals) / total
-    p0 = 1 - p1
-    eps = 1e-9
-    return -(p0 * np.log2(p0 + eps) + p1 * np.log2(p1 + eps))
+    return pd.DataFrame(interactions)
