@@ -1,117 +1,75 @@
 """
-High-level data cleaning pipeline orchestrator.
+data_cleaning.py
+----------------
+Main CleaningPipeline that orchestrates:
 
-This module connects:
-- ingestion outputs (UCI + Kaggle datasets)
-- fairness-aligned cleaning rules
-- saving cleaned datasets to disk
+1. Column normalization
+2. Missing value handling
+3. Numeric anomaly correction
+4. SIS normalization
+5. Metadata extraction
+6. NFR metric recording
 
-It does NOT define the rules themselves; those live in `cleaning_rules.py`.
-It does NOT define helper utilities; those live in `cleaning_utils.py`.
-
-Responsibilities:
-- Load raw unified DataFrames from ingestion.
-- Apply `apply_cleaning_rules()` to each dataset.
-- Save cleaned versions to `data/cleaned/`.
-- Provide functions that other modules (e.g., feature engineering) can call.
+This pipeline is non-destructive: no columns are dropped.
 """
 
-import os
+import time
 import pandas as pd
 
-from src.data_ingestion.load_dataset_uci import load_uci_student_performance
-from src.data_ingestion.load_dataset_kaggle_habits import load_kaggle_student_habits
-from src.data_ingestion.load_dataset_kaggle_exam import load_kaggle_exam_performance
+from src.data_cleaning.cleaning_utils import (
+    normalize_columns,
+    fill_missing_values,
+    fix_numeric_anomalies,
+    extract_metadata,
+)
 
-from src.data_cleaning.cleaning_rules import apply_cleaning_rules
+from src.data_cleaning.schema_validation import normalize_sis_fields
+from src.data_cleaning.cleaning_rules import CLEANING_NFR_THRESHOLDS
 
 
-def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
+class CleaningPipeline:
     """
-    Apply the full fairness-aligned cleaning pipeline to a single DataFrame.
-
-    This is a thin wrapper around `apply_cleaning_rules()`, kept here for
-    readability and future extension (e.g., dataset-specific tweaks).
+    CleaningPipeline
+    ----------------
+    Applies universal cleaning rules and records NFR metrics.
     """
-    return apply_cleaning_rules(df)
 
+    def __init__(self, df: pd.DataFrame):
+        self.df = df.copy()
 
-def clean_uci() -> pd.DataFrame:
-    """
-    Load the UCI student performance dataset (already ingested and unified),
-    then apply the cleaning pipeline.
+        # Initialize metrics
+        self.metrics = {
+            "cleaning_time": None,
+            "record_count": len(df),
+            "numeric_anomalies_fixed": 0,
+            "missing_values_filled": 0,
+            "column_normalized": False,
+        }
 
-    Returns:
-        Cleaned UCI DataFrame, ready for feature engineering and modeling.
-    """
-    df = load_uci_student_performance()
-    df_clean = clean_dataset(df)
-    return df_clean
+        # Metadata for feature engineering
+        self.metadata = {}
 
+    def clean(self):
+        """Run the full cleaning pipeline."""
+        start = time.time()
 
-def clean_kaggle_habits() -> pd.DataFrame:
-    """
-    Load the Kaggle study habits dataset (already ingested and unified),
-    then apply the cleaning pipeline.
+        # Column normalization
+        self.df = normalize_columns(self.df)
+        self.metrics["column_normalized"] = True
 
-    Returns:
-        Cleaned Kaggle Habits DataFrame.
-    """
-    df = load_kaggle_student_habits()
-    df_clean = clean_dataset(df)
-    return df_clean
+        # Missing values (CoW-safe)
+        self.metrics["missing_values_filled"] = fill_missing_values(self.df)
 
+        # Numeric anomalies
+        self.metrics["numeric_anomalies_fixed"] = fix_numeric_anomalies(self.df)
 
-def clean_kaggle_exam() -> pd.DataFrame:
-    """
-    Load the Kaggle exam performance dataset (already ingested and unified),
-    then apply the cleaning pipeline.
+        # SIS normalization
+        self.df = normalize_sis_fields(self.df)
 
-    Returns:
-        Cleaned Kaggle Exam DataFrame.
-    """
-    df = load_kaggle_exam_performance()
-    df_clean = clean_dataset(df)
-    return df_clean
+        # Metadata extraction
+        self.metadata = extract_metadata(self.df)
 
+        end = time.time()
+        self.metrics["cleaning_time"] = end - start
 
-def save_cleaned(df: pd.DataFrame, name: str) -> None:
-    """
-    Save a cleaned DataFrame to the `data/cleaned/` folder as CSV.
-
-    Parameters:
-        df   : cleaned DataFrame
-        name : base filename (without extension), e.g. "uci_cleaned"
-
-    This function ensures the folder exists and prints the path for traceability.
-    """
-    os.makedirs("data/cleaned", exist_ok=True)
-    path = os.path.join("data", "cleaned", f"{name}.csv")
-    df.to_csv(path, index=False)
-    print(f"Saved cleaned dataset to: {path}")
-
-
-def main():
-    """
-    End-to-end cleaning runner.
-
-    When you run:
-
-        python src/data_cleaning/data_cleaning.py
-
-    This function will:
-    - load all three datasets via ingestion
-    - clean them using fairness-aligned rules
-    - save them to `data/cleaned/` as CSVs
-    """
-    uci_clean = clean_uci()
-    kaggle_habits_clean = clean_kaggle_habits()
-    kaggle_exam_clean = clean_kaggle_exam()
-
-    save_cleaned(uci_clean, "uci_cleaned")
-    save_cleaned(kaggle_habits_clean, "kaggle_habits_cleaned")
-    save_cleaned(kaggle_exam_clean, "kaggle_exam_cleaned")
-
-
-if __name__ == "__main__":
-    main()
+        return self.df, self.metrics, self.metadata
