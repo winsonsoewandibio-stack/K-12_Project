@@ -1,49 +1,44 @@
 """
-Schema validation for cleaned datasets.
+schema_validation.py
+--------------------
+Validates and normalizes SIS schema fields after cleaning.
 
-Ensures each dataset contains the expected columns after cleaning.
-This prevents silent ingestion changes from breaking downstream steps.
+This ensures that feature engineering receives consistent SIS fields
+across all datasets.
 """
 
-EXPECTED_UCI_COLUMNS = {
-    "gender",
-    "age",
-    "study_hours_per_day",
-    "sleep_hours",
-    "attendance_percentage",
-    "final_exam_score",
-}
-
-EXPECTED_KAGGLE_HABITS_COLUMNS = {
-    "gender",
-    "age",
-    "study_hours_per_day",
-    "sleep_hours",
-    "internet_access",
-    "attendance_percentage",
-}
-
-EXPECTED_KAGGLE_EXAM_COLUMNS = {
-    "gender",
-    "age",
-    "study_hours_per_day",
-    "sleep_hours",
-    "attendance_percentage",
-    "final_exam_score",
-}
+import pandas as pd
+from src.data_ingestion.common_scheme import SIS_REQUIRED_FIELDS
 
 
-def validate_schema(df, expected_columns, dataset_name):
+# -------------------------------------------------------------------
+# SIS Schema Validation
+# -------------------------------------------------------------------
+def validate_sis_schema(df):
     """
-    Validate that the cleaned dataset contains the expected columns.
-    Missingness indicators are not required in the expected schema.
+    Check whether all SIS fields exist in the cleaned dataset.
+
+    Returns:
+        list: missing SIS fields (empty list means valid).
     """
-    df_columns = set(df.columns)
-    missing = expected_columns - df_columns
+    missing = [f for f in SIS_REQUIRED_FIELDS if f not in df.columns]
+    return missing
 
-    if missing:
-        raise AssertionError(
-            f"{dataset_name} is missing required columns: {missing}"
-        )
 
-    return True
+# -------------------------------------------------------------------
+# SIS Field Normalization
+# -------------------------------------------------------------------
+def normalize_sis_fields(df):
+    """
+    Ensure SIS fields are numeric where required.
+
+    - attendance → numeric
+    - exam_score → numeric
+    """
+    if "attendance" in df.columns:
+        df["attendance"] = pd.to_numeric(df["attendance"], errors="coerce")
+
+    if "exam_score" in df.columns:
+        df["exam_score"] = pd.to_numeric(df["exam_score"], errors="coerce")
+
+    return df
