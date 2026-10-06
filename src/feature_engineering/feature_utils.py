@@ -1,62 +1,74 @@
 """
 feature_utils.py
 ----------------
-Utility functions used by the FeatureEngineeringPipeline.
+Utility functions for feature engineering.
 """
 
 import pandas as pd
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 
 
-# -------------------------------------------------------------------
-# One-Hot Encoding (High-Cardinality Safe)
-# -------------------------------------------------------------------
-def encode_categorical(df: pd.DataFrame, categorical_cols: list):
-    """
-    One-hot encode categorical columns, excluding high-cardinality columns.
-
-    High-cardinality columns (e.g., student_id with 100k unique values)
-    would explode the feature space and violate NFR constraints.
-
-    IMPORTANT:
-    - We DO NOT drop high-cardinality columns.
-    - We simply DO NOT encode them.
-    - They remain in the dataset for identification, fairness slicing,
-      SHAP per-student explanations, and prediction reporting.
-    """
-    safe_cols = []
-
+# -----------------------------------------------------------
+# Categorical Encoding
+# -----------------------------------------------------------
+def encode_categorical(df, categorical_cols):
     for col in categorical_cols:
-        unique_count = df[col].nunique()
-
-        # Skip columns with too many categories
-        if unique_count <= 50:
-            safe_cols.append(col)
-        else:
-            print(f"[WARNING] Skipping high-cardinality column: {col} ({unique_count} unique values)")
-
-    # Only encode safe categorical columns
-    return pd.get_dummies(df, columns=safe_cols, drop_first=True)
-
-
-# -------------------------------------------------------------------
-# Numeric Scaling
-# -------------------------------------------------------------------
-def scale_numeric(df: pd.DataFrame, numeric_cols: list, method="standard"):
-    scaler = StandardScaler() if method == "standard" else MinMaxScaler()
-    df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+        df[col] = df[col].astype(str)
+        df[col] = df[col].fillna("unknown")
+        df[col] = df[col].astype("category")
     return df
 
 
-# -------------------------------------------------------------------
-# Interaction Features
-# -------------------------------------------------------------------
-def create_interaction_features(df: pd.DataFrame, numeric_cols: list):
-    interactions = {}
+# -----------------------------------------------------------
+# Numeric Scaling
+# -----------------------------------------------------------
+def scale_numeric(df, numeric_cols, scaling_method):
+    """
+    Scales numeric columns using StandardScaler.
 
-    for i, col1 in enumerate(numeric_cols):
-        for col2 in numeric_cols[i+1:]:
-            interactions[f"{col1}_plus_{col2}"] = df[col1] + df[col2]
-            interactions[f"{col1}_times_{col2}"] = df[col1] * df[col2]
+    ID columns MUST NOT be scaled.
+    """
 
-    return pd.DataFrame(interactions)
+    # Skip ID columns
+    ID_COLUMNS = ["student_id", "school_id", "class_id"]
+    numeric_cols = [col for col in numeric_cols if col not in ID_COLUMNS]
+
+    if not numeric_cols:
+        return df
+
+    scaler = StandardScaler()
+    df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+
+    return df
+
+
+# -----------------------------------------------------------
+# Interaction Features (Optimized to avoid fragmentation)
+# -----------------------------------------------------------
+def create_interaction_features(df, numeric_cols):
+    """
+    Creates pairwise interaction features for numeric columns.
+    ID columns are excluded.
+
+    Optimized to avoid DataFrame fragmentation by building
+    all interaction columns in a dictionary first, then
+    creating a DataFrame once.
+    """
+
+    ID_COLUMNS = ["student_id", "school_id", "class_id"]
+    numeric_cols = [col for col in numeric_cols if col not in ID_COLUMNS]
+
+    interaction_dict = {}
+
+    # Build all interaction columns in a dict (fast, no fragmentation)
+    for i in range(len(numeric_cols)):
+        for j in range(i + 1, len(numeric_cols)):
+            col_i = numeric_cols[i]
+            col_j = numeric_cols[j]
+            interaction_name = f"{col_i}_x_{col_j}"
+            interaction_dict[interaction_name] = df[col_i] * df[col_j]
+
+    # Create DataFrame once (no fragmentation)
+    interaction_df = pd.DataFrame(interaction_dict, index=df.index)
+
+    return interaction_df

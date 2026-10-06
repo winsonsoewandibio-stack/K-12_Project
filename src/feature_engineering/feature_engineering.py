@@ -5,6 +5,7 @@ Main FeatureEngineeringPipeline.
 """
 
 import time
+import os
 import pandas as pd
 
 from src.feature_engineering.feature_utils import (
@@ -69,5 +70,17 @@ class FeatureEngineeringPipeline:
 
         assert self.metrics["total_features"] <= FEATURE_NFR_THRESHOLDS["max_features"], \
             f"Too many features created ({self.metrics['total_features']} > {FEATURE_NFR_THRESHOLDS['max_features']})."
+
+        # -----------------------------------------------------------
+        # 6. Save engineered dataset for downstream modules
+        # -----------------------------------------------------------
+        output_dir = "artifacts/feature_engineering/"
+        os.makedirs(output_dir, exist_ok=True)
+
+        save_path = output_dir + "engineered_dataset.csv"
+        self.df.to_csv(save_path, index=False)
+
+        print(f"[INFO] Engineered dataset saved to: {save_path}")
+        print(f"[INFO] Total features: {self.metrics['total_features']}")
 
         return self.df, self.metrics
