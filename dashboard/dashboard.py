@@ -1114,7 +1114,7 @@ elif page == "Student Intervention Checker":
     model = artifacts["model"]
 
     # ============================================================
-    # EXAM — ML-powered recommendations (no prediction shown)
+    # EXAM — ML-powered recommendations 
     # ============================================================
     if dataset_choice == "exam":
         st.header("EXAM Student Input")
@@ -1171,7 +1171,7 @@ elif page == "Student Intervention Checker":
 
             df_engineered = fe_single_exam_student(raw_exam)
 
-            # ML prediction (not shown)
+            # ML prediction 
             _ = model.predict(df_engineered)
 
             # SHAP explanation
@@ -1255,7 +1255,7 @@ elif page == "Student Intervention Checker":
             st.dataframe(pd.DataFrame(shap_importance))
 
     # ============================================================
-    # UCI — ML-powered recommendations (no prediction shown)
+    # UCI — ML-powered recommendations
     # ============================================================
     elif dataset_choice == "uci":
         st.header("UCI Student Input")
@@ -1303,7 +1303,7 @@ elif page == "Student Intervention Checker":
 
             df_engineered = fe_single_uci_student(raw_uci)
 
-            # ML prediction (not shown)
+            # ML prediction 
             _ = model.predict(df_engineered)
 
             # SHAP explanation
